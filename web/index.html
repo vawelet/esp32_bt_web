@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Asronik Web BLE WiFi</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="UTF-8">
+    <style>
+        html {
+            font-family: Arial, Helvetica, sans-serif;
+            text-align: center;
+        }
+        body {
+            margin: 0;
+        }
+        .logo-bar {
+            background-color: #ffffff;
+            padding: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            text-align: center;
+        }
+        .logo-bar img {
+            height: 60px;
+            max-width: 100%;
+            object-fit: contain;
+        }
+        .content {
+            padding: 30px;
+        }
+        .card-grid {
+            max-width: 500px;
+            margin: 0 auto;
+            margin-top: 30px;
+            display: grid;
+            grid-gap: 2rem;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+        .card {
+            background-color: white;
+            box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5);
+            padding: 20px;
+            border-radius: 8px;
+        }
+        button {
+            color: white;
+            padding: 14px 20px;
+            margin: 8px 0;
+            border: none;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .onButton { background-color: #1b8a94; }
+        .connectButton { background-color: #24af37; }
+        .disconnectButton { background-color: #d13a30; }
+        .gray-label {
+            color: #777;
+            font-size: 1rem;
+        }
+        input[type="text"], input[type="password"] {
+            padding: 8px;
+            width: 80%;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            margin-top: 5px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Logo -->
+    <div class="logo-bar">
+        <img src="asronik_logo.png" alt="Asronik Logo">
+    </div>
+
+    <div class="content">
+
+        <div class="card-grid">
+            <div class="card">
+                <button id="connectBleButton" class="connectButton">BLE Bağlan</button>
+                <button id="disconnectBleButton" class="disconnectButton">Bağlantıyı Kes</button>
+                <p class="gray-label">BLE durumu: <strong><span id="bleState" style="color:#d13a30;">Bağlı değil</span></strong></p>
+            </div>
+        </div>
+
+        <!-- WiFi bilgisi gönderme -->
+        <div class="card-grid">
+            <div class="card">
+                <label>SSID:</label><br/>
+                <input type="text" id="ssidInput"><br/>
+                <label>Şifre:</label><br/>
+                <input type="password" id="passInput"><br/>
+                <label><input type="checkbox" id="remember"> Hatırla</label><br>
+                <button id="sendWifiButton" class="onButton">Gönder</button>
+            </div>
+        </div>
+
+        <!-- Tarama listesi -->
+        <div class="card-grid">
+            <div class="card">
+                <h3>Çevredeki Ağlar</h3>
+                <ul id="wifiList" style="list-style-type:none; padding:0;"></ul>
+            </div>
+        </div>
+
+    </div>
+
+<script>
+    const connectButton = document.getElementById('connectBleButton');
+    const disconnectButton = document.getElementById('disconnectBleButton');
+    const sendWifiButton = document.getElementById('sendWifiButton');
+    const ssidInput = document.getElementById('ssidInput');
+    const passInput = document.getElementById('passInput');
+    const rememberCheckbox = document.getElementById('remember');
+    const bleStateContainer = document.getElementById('bleState');
+    const wifiList = document.getElementById('wifiList');
+
+    const deviceNamePrefix = "RSKeyPad";
+    const bleServiceUUID = "12345678-1234-1234-1234-1234567890ab";
+    const writeCharacteristicUUID = "abcd1234-5678-90ab-cdef-1234567890ab";
+    const scanCharacteristicUUID  = "abcd1234-5678-90ab-cdef-1234567890ac";
+
+    let bleServer = null;
+    let writeCharacteristic = null;
+    let scanCharacteristic = null;
+
+    window.addEventListener("load", () => {
+        if (localStorage.getItem("remember") === "true") {
+            ssidInput.value = localStorage.getItem("ssid");
+            passInput.value = localStorage.getItem("password");
+            rememberCheckbox.checked = true;
+        }
+    });
+
+    connectButton.addEventListener('click', async () => {
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ namePrefix: deviceNamePrefix }],
+                optionalServices: [bleServiceUUID]
+            });
+
+            device.addEventListener('gattserverdisconnected', () => {
+                bleStateContainer.innerText = "Bağlantı koptu";
+                bleStateContainer.style.color = "#d13a30";
+            });
+
+            const server = await device.gatt.connect();
+            bleServer = server;
+            const service = await server.getPrimaryService(bleServiceUUID);
+            writeCharacteristic = await service.getCharacteristic(writeCharacteristicUUID);
+            scanCharacteristic = await service.getCharacteristic(scanCharacteristicUUID);
+
+            scanCharacteristic.addEventListener("characteristicvaluechanged", handleScanResult);
+            await scanCharacteristic.startNotifications();
+
+            bleStateContainer.innerText = "Bağlı";
+            bleStateContainer.style.color = "#24af37";
+        } catch (error) {
+            bleStateContainer.innerText = "Bağlantı başarısız";
+            bleStateContainer.style.color = "#d13a30";
+            console.error("[BLE] Bağlantı hatası:", error);
+        }
+    });
+
+    disconnectButton.addEventListener('click', () => {
+        if (bleServer && bleServer.connected) {
+            bleServer.disconnect();
+            bleStateContainer.innerText = "Bağlantı kesildi";
+            bleStateContainer.style.color = "#d13a30";
+        }
+    });
+
+    sendWifiButton.addEventListener('click', async () => {
+        const ssid = ssidInput.value.trim();
+        const pass = passInput.value.trim();
+        const remember = rememberCheckbox.checked;
+
+        if (!ssid || !pass) {
+            alert("Lütfen SSID ve şifre girin.");
+            return;
+        }
+
+        if (remember) {
+            localStorage.setItem("ssid", ssid);
+            localStorage.setItem("password", pass);
+            localStorage.setItem("remember", "true");
+        } else {
+            localStorage.clear();
+        }
+
+        if (!writeCharacteristic) {
+            alert("Önce BLE bağlantısı kurmalısınız.");
+            return;
+        }
+
+        try {
+            const data = new TextEncoder().encode(`${ssid}|${pass}`);
+            await writeCharacteristic.writeValue(data);
+            alert("WiFi bilgisi gönderildi. ESP32 bağlanmaya çalışıyor...");
+        } catch (error) {
+            console.error("[BLE] Yazma hatası:", error);
+            alert("BLE üzerinden veri gönderilemedi:\n" + error);
+        }
+    });
+
+    function handleScanResult(event) {
+        const value = new TextDecoder().decode(event.target.value);
+        const networks = JSON.parse(value);
+
+        wifiList.innerHTML = "";
+
+        networks.forEach(net => {
+            const li = document.createElement("li");
+            li.textContent = `${net.ssid} (${net.rssi} dBm)`;
+            if (net.connected) {
+                li.textContent += " [Bağlı]";
+                li.style.opacity = 0.5;
+            }
+            wifiList.appendChild(li);
+        });
+    }
+</script>
+
+</body>
+</html>
