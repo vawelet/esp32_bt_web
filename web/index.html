@@ -1,45 +1,53 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Asronik Web BLE WiFi</title>
+    <title>Asronik Web Bluetooth WiFi</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta charset="UTF-8">
+
     <style>
         html {
             font-family: Arial, Helvetica, sans-serif;
             text-align: center;
         }
+
         body {
             margin: 0;
+            background-color: #f5f5f5;
         }
+
         .logo-bar {
             background-color: #ffffff;
             padding: 10px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
             text-align: center;
         }
+
         .logo-bar img {
             height: 60px;
             max-width: 100%;
             object-fit: contain;
         }
+
         .content {
             padding: 30px;
         }
+
         .card-grid {
             max-width: 500px;
-            margin: 0 auto;
-            margin-top: 30px;
+            margin: 30px auto 0 auto;
             display: grid;
             grid-gap: 2rem;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         }
+
         .card {
             background-color: white;
             box-shadow: 2px 2px 12px 1px rgba(140,140,140,.5);
             padding: 20px;
             border-radius: 8px;
         }
+
         button {
             color: white;
             padding: 14px 20px;
@@ -47,15 +55,33 @@
             border: none;
             cursor: pointer;
             border-radius: 4px;
+            min-width: 120px;
         }
-        .onButton { background-color: #1b8a94; }
-        .connectButton { background-color: #24af37; }
-        .disconnectButton { background-color: #d13a30; }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .onButton {
+            background-color: #1b8a94;
+        }
+
+        .connectButton {
+            background-color: #24af37;
+        }
+
+        .disconnectButton {
+            background-color: #d13a30;
+        }
+
         .gray-label {
             color: #777;
             font-size: 1rem;
         }
-        input[type="text"], input[type="password"] {
+
+        input[type="text"],
+        input[type="password"] {
             padding: 8px;
             width: 80%;
             border: 1px solid #ccc;
@@ -65,6 +91,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="logo-bar">
         <img src="asronik_logo.png" alt="Asronik Logo">
@@ -73,123 +100,287 @@
     <div class="content">
         <div class="card-grid">
             <div class="card">
-                <button id="connectBleButton" class="connectButton">BLE Bağlan</button>
+                <button id="connectBleButton" class="connectButton">Bağlan</button>
                 <button id="disconnectBleButton" class="disconnectButton">Bağlantıyı Kes</button>
-                <p class="gray-label">BLE durumu: <strong><span id="bleState" style="color:#d13a30;">Bağlı değil</span></strong></p>
+
+                <p class="gray-label">
+                    Bluetooth durumu:
+                    <strong><span id="bleState" style="color:#d13a30;">Bağlı değil</span></strong>
+                </p>
+
                 <p class="gray-label" id="feedbackText"></p>
             </div>
         </div>
 
         <div class="card-grid">
             <div class="card">
-                <label>SSID:</label><br/>
-                <input type="text" id="ssidInput"><br/>
-                <label>Şifre:</label><br/>
-                <input type="password" id="passInput"><br/>
-                <label><input type="checkbox" id="remember"> Hatırla</label><br>
+                <label>SSID:</label><br>
+                <input type="text" id="ssidInput"><br>
+
+                <label>Şifre:</label><br>
+                <input type="password" id="passInput"><br>
+
+                <label>
+                    <input type="checkbox" id="remember"> Hatırla
+                </label><br>
+
                 <button id="sendWifiButton" class="onButton">Gönder</button>
             </div>
         </div>
     </div>
 
 <script>
-    const connectButton = document.getElementById('connectBleButton');
-    const disconnectButton = document.getElementById('disconnectBleButton');
-    const sendWifiButton = document.getElementById('sendWifiButton');
-    const ssidInput = document.getElementById('ssidInput');
-    const passInput = document.getElementById('passInput');
-    const rememberCheckbox = document.getElementById('remember');
-    const bleStateContainer = document.getElementById('bleState');
-    const feedbackText = document.getElementById('feedbackText');
+    const connectButton = document.getElementById("connectBleButton");
+    const disconnectButton = document.getElementById("disconnectBleButton");
+    const sendWifiButton = document.getElementById("sendWifiButton");
 
-    const deviceNamePrefix = "RSKeyPad";
+    const ssidInput = document.getElementById("ssidInput");
+    const passInput = document.getElementById("passInput");
+    const rememberCheckbox = document.getElementById("remember");
+
+    const bleStateContainer = document.getElementById("bleState");
+    const feedbackText = document.getElementById("feedbackText");
+
+    const deviceNamePrefix = "ATLAS";
     const bleServiceUUID = "12345678-1234-1234-1234-1234567890ab";
     const writeCharacteristicUUID = "abcd1234-5678-90ab-cdef-1234567890ab";
 
+    const BLE_STATE = {
+        DISCONNECTED: "DISCONNECTED",
+        CONNECTING: "CONNECTING",
+        CONNECTED: "CONNECTED",
+        SENDING: "SENDING",
+        ERROR: "ERROR"
+    };
+
+    let bleDevice = null;
     let bleServer = null;
     let writeCharacteristic = null;
+    let currentState = BLE_STATE.DISCONNECTED;
 
-    window.addEventListener("load", () => {
-        if (localStorage.getItem("remember") === "true") {
-            ssidInput.value = localStorage.getItem("ssid");
-            passInput.value = localStorage.getItem("password");
-            rememberCheckbox.checked = true;
+    window.addEventListener("load", initPage);
+
+    connectButton.addEventListener("click", connectBle);
+    disconnectButton.addEventListener("click", disconnectBle);
+    sendWifiButton.addEventListener("click", sendWifiCredentials);
+
+    function initPage() {
+        loadSavedCredentials();
+        setBleState(BLE_STATE.DISCONNECTED, "Bağlı değil");
+
+        if (!navigator.bluetooth) {
+            setFeedback("Bu tarayıcı Web Bluetooth desteklemiyor.");
+            connectButton.disabled = true;
         }
-    });
+    }
 
-    connectButton.addEventListener('click', async () => {
-        try {
-            const device = await navigator.bluetooth.requestDevice({
-                filters: [{ namePrefix: deviceNamePrefix }],
-                optionalServices: [bleServiceUUID]
-            });
+    function setBleState(state, text) {
+        currentState = state;
 
-            device.addEventListener('gattserverdisconnected', () => {
-                bleStateContainer.innerText = "Bağlantı koptu";
+        switch (state) {
+            case BLE_STATE.DISCONNECTED:
+                bleStateContainer.innerText = text || "Bağlı değil";
                 bleStateContainer.style.color = "#d13a30";
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+                sendWifiButton.disabled = true;
+                break;
+
+            case BLE_STATE.CONNECTING:
+                bleStateContainer.innerText = text || "Bağlanıyor...";
+                bleStateContainer.style.color = "#d98c00";
+                connectButton.disabled = true;
+                disconnectButton.disabled = true;
+                sendWifiButton.disabled = true;
+                break;
+
+            case BLE_STATE.CONNECTED:
+                bleStateContainer.innerText = text || "Bağlı";
+                bleStateContainer.style.color = "#24af37";
+                connectButton.disabled = true;
+                disconnectButton.disabled = false;
+                sendWifiButton.disabled = false;
+                break;
+
+            case BLE_STATE.SENDING:
+                bleStateContainer.innerText = text || "Veri gönderiliyor...";
+                bleStateContainer.style.color = "#1b8a94";
+                connectButton.disabled = true;
+                disconnectButton.disabled = false;
+                sendWifiButton.disabled = true;
+                break;
+
+            case BLE_STATE.ERROR:
+                bleStateContainer.innerText = text || "Hata";
+                bleStateContainer.style.color = "#d13a30";
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+                sendWifiButton.disabled = true;
+                break;
+        }
+    }
+
+    function setFeedback(message) {
+        feedbackText.innerText = message;
+    }
+
+    async function connectBle() {
+        try {
+            setBleState(BLE_STATE.CONNECTING, "Cihaz aranıyor...");
+            setFeedback("");
+
+            bleDevice = await navigator.bluetooth.requestDevice({
+                filters: [
+                    { namePrefix: deviceNamePrefix }
+                ],
+                optionalServices: [
+                    bleServiceUUID
+                ]
             });
 
-            const server = await device.gatt.connect();
-            bleServer = server;
-            const service = await server.getPrimaryService(bleServiceUUID);
+            bleDevice.addEventListener("gattserverdisconnected", handleBleDisconnected);
+
+            setBleState(BLE_STATE.CONNECTING, "Bağlanıyor...");
+
+            bleServer = await bleDevice.gatt.connect();
+
+            const service = await bleServer.getPrimaryService(bleServiceUUID);
 
             writeCharacteristic = await service.getCharacteristic(writeCharacteristicUUID);
-            await writeCharacteristic.startNotifications();
-            writeCharacteristic.addEventListener("characteristicvaluechanged", event => {
-                const feedback = new TextDecoder().decode(event.target.value);
-                feedbackText.innerText = "ESP32: " + feedback;
-            });
 
-            bleStateContainer.innerText = "Bağlı";
-            bleStateContainer.style.color = "#24af37";
+            try {
+                await writeCharacteristic.startNotifications();
+
+                writeCharacteristic.addEventListener("characteristicvaluechanged", handleBleNotification);
+            } catch (notificationError) {
+                console.warn("Notification başlatılamadı:", notificationError);
+            }
+
+            setBleState(BLE_STATE.CONNECTED, "Bağlı");
+            setFeedback("ATLAS bağlantısı kuruldu.");
+
         } catch (error) {
-            bleStateContainer.innerText = "Bağlantı başarısız";
-            bleStateContainer.style.color = "#d13a30";
-            console.error("[BLE] Bağlantı hatası:", error);
-        }
-    });
+            console.error("Bluetooth bağlantı hatası:", error);
+            writeCharacteristic = null;
+            bleServer = null;
+            bleDevice = null;
 
-    disconnectButton.addEventListener('click', () => {
-        if (bleServer && bleServer.connected) {
-            bleServer.disconnect();
-            bleStateContainer.innerText = "Bağlantı kesildi";
-            bleStateContainer.style.color = "#d13a30";
+            setBleState(BLE_STATE.ERROR, "Bağlantı başarısız");
+            setFeedback("Bluetooth bağlantısı kurulamadı.");
         }
-    });
+    }
 
-    sendWifiButton.addEventListener('click', async () => {
+    function disconnectBle() {
+        try {
+            if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) {
+                bleDevice.gatt.disconnect();
+            } else if (bleServer && bleServer.connected) {
+                bleServer.disconnect();
+            }
+
+            writeCharacteristic = null;
+            bleServer = null;
+            bleDevice = null;
+
+            setBleState(BLE_STATE.DISCONNECTED, "Bağlantı kesildi");
+            setFeedback("");
+
+        } catch (error) {
+            console.error("Bağlantı kesme hatası:", error);
+            setBleState(BLE_STATE.ERROR, "Bağlantı kesilemedi");
+        }
+    }
+
+    async function sendWifiCredentials() {
         const ssid = ssidInput.value.trim();
-        const pass = passInput.value.trim();
-        const remember = rememberCheckbox.checked;
+
+        /*
+            Şifreye trim yapılmıyor.
+            Çünkü WiFi şifresinin başında/sonunda boşluk varsa bu gerçek şifrenin parçası olabilir.
+        */
+        const pass = passInput.value;
 
         if (!ssid || !pass) {
             alert("Lütfen SSID ve şifre girin.");
             return;
         }
 
-        if (remember) {
+        if (!writeCharacteristic) {
+            alert("Önce Bluetooth bağlantısı kurmalısınız.");
+            return;
+        }
+
+        saveCredentialsIfNeeded(ssid, pass);
+
+        try {
+            setBleState(BLE_STATE.SENDING, "WiFi bilgisi gönderiliyor...");
+
+            /*
+                ESP32'ye giden veri formatı değişmedi.
+                Kesme işareti, Türkçe karakter veya özel karakter varsa JSON.stringify
+                bunları düzgün şekilde string içine alır.
+            */
+            const json = JSON.stringify({
+                ssid: ssid,
+                pass: pass
+            });
+
+            console.log("Gönderilen JSON:", json);
+
+            const data = new TextEncoder().encode(json);
+
+            await writeCharacteristic.writeValue(data);
+
+            setBleState(BLE_STATE.CONNECTED, "Bağlı");
+            setFeedback("WiFi bilgisi gönderildi. ATLAS yanıtı bekleniyor...");
+
+        } catch (error) {
+            console.error("BLE yazma hatası:", error);
+            setBleState(BLE_STATE.CONNECTED, "Bağlı");
+            setFeedback("Veri gönderilemedi.");
+            alert("Veri gönderilemedi:\n" + error);
+        }
+    }
+
+    function handleBleNotification(event) {
+        try {
+            const feedback = new TextDecoder("utf-8").decode(event.target.value);
+            setFeedback("ATLAS : " + feedback);
+        } catch (error) {
+            console.error("Notification okuma hatası:", error);
+            setFeedback("ATLAS yanıtı okunamadı.");
+        }
+    }
+
+    function handleBleDisconnected() {
+        writeCharacteristic = null;
+        bleServer = null;
+
+        setBleState(BLE_STATE.DISCONNECTED, "Bağlantı koptu");
+        setFeedback("ATLAS bağlantısı koptu.");
+    }
+
+    function saveCredentialsIfNeeded(ssid, pass) {
+        if (rememberCheckbox.checked) {
             localStorage.setItem("ssid", ssid);
             localStorage.setItem("password", pass);
             localStorage.setItem("remember", "true");
         } else {
-            localStorage.clear();
+            localStorage.removeItem("ssid");
+            localStorage.removeItem("password");
+            localStorage.removeItem("remember");
         }
+    }
 
-        if (!writeCharacteristic) {
-            alert("Önce BLE bağlantısı kurmalısınız.");
-            return;
-        }
+    function loadSavedCredentials() {
+        const remember = localStorage.getItem("remember");
 
-        try {
-            const json = JSON.stringify({ ssid: ssid, pass: pass });
-            const data = new TextEncoder().encode(json);
-            await writeCharacteristic.writeValue(data);
-            feedbackText.innerText = "WiFi bilgisi gönderildi. ESP32 yanıtı bekleniyor...";
-        } catch (error) {
-            console.error("[BLE] Yazma hatası:", error);
-            alert("BLE üzerinden veri gönderilemedi:\n" + error);
+        if (remember === "true") {
+            ssidInput.value = localStorage.getItem("ssid") || "";
+            passInput.value = localStorage.getItem("password") || "";
+            rememberCheckbox.checked = true;
         }
-    });
+    }
 </script>
 </body>
 </html>
